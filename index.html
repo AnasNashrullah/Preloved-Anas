@@ -739,20 +739,46 @@ function discount(item) {
   return Math.round((1 - item.price / item.orig) * 100);
 }
 
-function getState() {
-  try { return JSON.parse(localStorage.getItem('preloved_state') || '{}'); } catch(e) { return {}; }
-}
-function saveState(s) {
-  localStorage.setItem('preloved_state', JSON.stringify(s));
+const BIN_ID = "69f4d359856a682189959663";
+const BIN_KEY = "$2a$10$LZlq.J8FJg.SW7/nP0AtEOwNARXSdabjewJlXfgheO9k3v4qyxp9G";
+const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+
+let cachedState = null;
+
+async function getState() {
+  if (cachedState) return cachedState;
+  try {
+    const res = await fetch(BIN_URL + '/latest', {
+      headers: { 'X-Master-Key': BIN_KEY }
+    });
+    const data = await res.json();
+    cachedState = data.record || { offers: {}, sold: {} };
+    return cachedState;
+  } catch(e) {
+    return { offers: {}, sold: {} };
+  }
 }
 
-function renderGrid(items) {
-  const state = getState();
+async function saveState(state) {
+  cachedState = state;
+  try {
+    await fetch(BIN_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Master-Key': BIN_KEY },
+      body: JSON.stringify(state)
+    });
+  } catch(e) {
+    console.error('Failed to save state', e);
+  }
+}
+
+async function renderGrid(items) {
+  const state = await getState();
   const grid = document.getElementById('grid');
   grid.innerHTML = items.map(item => {
     const disc = discount(item);
-    const sold = state[item.id]?.sold || false;
-    const offerCount = state[item.id]?.offers || 0;
+    const sold = state.sold?.[item.id] || false;
+    const offerCount = state.offers?.[item.id] || 0;
     const priceTag = item.price ? `<div class="price-tag">$${item.price}</div>` : `<div class="price-tag">Ask me!</div>`;
     const bnibBadge = item.bnib ? `<div class="badge-bnib">Brand New</div>` : '';
     const imgBlock = item.img ? `<img src="${item.img}" alt="${item.name}" loading="lazy">` : `<div class="no-img"><span>${item.emoji}</span><p>${item.brand !== '—' ? item.brand : 'No Brand'}</p></div>`;
@@ -786,17 +812,17 @@ function renderGrid(items) {
   }).join('');
 
   // Update stats bar sold count
-  const totalSold = Object.values(state).filter(v => v.sold).length;
-  const totalOffers = Object.values(state).reduce((sum, v) => sum + (v.offers||0), 0);
+  const totalSold = Object.values(state.sold || {}).filter(v => v).length;
+  const totalOffers = Object.values(state.offers || {}).reduce((sum, v) => sum + (v||0), 0);
   document.getElementById('stat-sold').textContent = totalSold;
   document.getElementById('stat-offers').textContent = totalOffers;
 }
 
-function toggleSold(id) {
-  const state = getState();
-  if (!state[id]) state[id] = { sold: false, offers: 0 };
-  state[id].sold = !state[id].sold;
-  saveState(state);
+async function toggleSold(id) {
+  const state = await getState();
+  if (!state.sold) state.sold = {};
+  state.sold[id] = !state.sold[id];
+  await saveState(state);
   applyFiltersAndSort();
 }
 
@@ -834,13 +860,13 @@ function sortItems(val) {
   applyFiltersAndSort();
 }
 
-function applyFiltersAndSort() {
+async function applyFiltersAndSort() {
   let items = [...ITEMS];
   if (activeFilter !== 'all') items = items.filter(i => i.category === activeFilter);
   if (activeSort === 'price-low') items.sort((a,b) => (a.price||999) - (b.price||999));
   else if (activeSort === 'price-high') items.sort((a,b) => (b.price||0) - (a.price||0));
   else if (activeSort === 'discount') items.sort((a,b) => discount(b) - discount(a));
-  renderGrid(items);
+  await renderGrid(items);
 }
 
 function openModal(id) {
@@ -917,12 +943,7 @@ async function submitOffer() {
   }
 }
 
-// Init - clear test data
-const stateVersion = '1.0';
-if (localStorage.getItem('preloved_version') !== stateVersion) {
-  localStorage.removeItem('preloved_state');
-  localStorage.setItem('preloved_version', stateVersion);
-}
+// Init
 applyFiltersAndSort();
 </script>
 </body>
